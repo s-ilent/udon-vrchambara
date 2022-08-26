@@ -27,7 +27,10 @@ public class MeleeWeaponEntity : UdonSharpBehaviour
     [Tooltip("AudioSource component, used for sound effects.")] public AudioSource localAudioSource;
     private bool localAudioSourceOK = false;
     
-    [Tooltip("Object sync component, used for resetting.")] public VRCObjectSync localVRCPickup;
+    [Tooltip("Object sync component, used for resetting.")] public VRCObjectSync localVRCObjectSync;
+    private bool localVRCObjectSyncOK = false;
+    
+    [Tooltip("Pickup component, used for hand checks.")] public VRCPickup localVRCPickup;
     private bool localVRCPickupOK = false;
 
     [Header("Sound Effects")]
@@ -37,6 +40,7 @@ public class MeleeWeaponEntity : UdonSharpBehaviour
     // Used to determine whether the local player is holding the weapon.
     // If they are, the sword attacks aren't sent. (defender authority)
     private bool weaponOwnerIsLocalPlayer = false;
+
     private VRC.SDKBase.VRCPlayerApi localOwner;
     private bool localOwnerCached = false;
 
@@ -95,23 +99,36 @@ public class MeleeWeaponEntity : UdonSharpBehaviour
         }
         
         // Try getting pickup component
+        if (localVRCObjectSync == null)
+        {
+            localVRCObjectSync = GetComponent<VRCObjectSync>();
+        }
+        if (localVRCObjectSync != null)
+        {
+            localVRCObjectSyncOK = true;
+        }
+        
+        // Try getting pickup component
         if (localVRCPickup == null)
         {
-            localVRCPickup = GetComponent<VRCObjectSync>();
+            localVRCPickup = GetComponent<VRCPickup>();
         }
         if (localVRCPickup != null)
         {
             localVRCPickupOK = true;
         }
+        // Initialise variables if the player is instance master
+        // weaponOwnerIsLocalPlayer is never set if the player is master
+        weaponOwnerIsLocalPlayer = Networking.LocalPlayer.isMaster;
     }
 
     public void Update()
     {   
         // Respawn when absoluteDropTimer is in the past
         double utcTime = Convert.ToDouble(DateTime.UtcNow.Ticks) / 1E+07D;
-        if (absoluteDropTimer > 0 && utcTime > absoluteDropTimer && localVRCPickupOK && localWasHeldThisSession)
+        if (absoluteDropTimer > 0 && utcTime > absoluteDropTimer && localVRCObjectSyncOK && localWasHeldThisSession)
         {
-            localVRCPickup.Respawn();
+            localVRCObjectSync.Respawn();
             absoluteDropTimer = 0.0;
         }
     }
@@ -158,9 +175,9 @@ public class MeleeWeaponEntity : UdonSharpBehaviour
             {
                 weaponOwnerIsLocalPlayer = false;
             }
-        } else
+        } 
+        else
         {
-            
             weaponOwnerIsLocalPlayer = false;
         }
         localOwner = player;
@@ -191,10 +208,6 @@ public class MeleeWeaponEntity : UdonSharpBehaviour
 
     private void _UpdateWeaponOwnershipOnHit(VRC.SDKBase.VRCPlayerApi player)
     {
-        if (localOwnerCached)
-        {
-            
-        }
     }
 
     // Apply attack to player, either local or remote.
@@ -202,13 +215,21 @@ public class MeleeWeaponEntity : UdonSharpBehaviour
     // When a remote player is attacked, cosmetic effects are played (SFX).
     private void applyAttack(VRC.SDKBase.VRCPlayerApi player)
     {
-        if (attackManagerOK == true)
+        
+        if (!weaponOwnerIsLocalPlayer)
+        {
+            // Update ownership 
+            localOwner = Networking.GetOwner(this.gameObject);
+        }
+
+        // Prevent player from hitting themself
+        if (attackManagerOK == true && player != localOwner)
         {
             #if CHAMBARA_DEBUG_MODE
             Debug.Log($"{this.transform.name} applyAttack by {player.displayName} player.isLocal {player.isLocal} weaponOwnerIsLocalPlayer {weaponOwnerIsLocalPlayer} localIsHeld {localIsHeld}");
             #endif
-            // when another player hits you
-            if (player.isLocal && (attackNonCombatants || (weaponOwnerIsLocalPlayer == false)) && localIsHeld == false)
+            // when another player or an entity hits you
+            if (player.isLocal && (attackNonCombatants || !weaponOwnerIsLocalPlayer) && !localIsHeld)
             {
                 #if CHAMBARA_DEBUG_MODE
                 Debug.Log($"{this.transform.name} is striking {player.displayName}");
